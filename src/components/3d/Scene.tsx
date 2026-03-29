@@ -11,6 +11,7 @@ import { RaycastController } from './RaycastController'
 import { usePlayerStore } from '@/store/playerStore'
 import { useProductStore } from '@/store/productStore'
 import { mockProducts } from '@/lib/mockProducts'
+import { Product } from '@/types'
 
 function LoadingFallback() {
   return (
@@ -27,7 +28,25 @@ export function Scene() {
   const setProducts      = useProductStore(s => s.setProducts)
 
   useEffect(() => {
-    setProducts(mockProducts)
+    // Intentar cargar productos desde Supabase
+    // Si falla (sin claves o sin conexión), usar mockProducts como fallback
+    async function loadProducts() {
+      try {
+        const res = await fetch('/api/products')
+        if (!res.ok) throw new Error('API error')
+        const { data } = await res.json()
+        if (data && data.length > 0) {
+          setProducts(data as Product[])
+        } else {
+          // DB vacía — usar mock hasta que se ejecute el seed
+          setProducts(mockProducts)
+        }
+      } catch {
+        console.warn('[Scene] Usando productos mock — ejecuta supabase-schema.sql')
+        setProducts(mockProducts)
+      }
+    }
+    loadProducts()
   }, [setProducts])
 
   return (
@@ -37,8 +56,6 @@ export function Scene() {
       dpr={dpr}
       gl={{
         antialias: true,
-        // AgXToneMapping — aprendido del skill react-three-next
-        // Más moderno que ACESFilmic: mejor manejo de altas luces y colores saturados
         toneMapping: THREE.AgXToneMapping,
         toneMappingExposure: 1.0,
       }}
@@ -60,7 +77,6 @@ export function Scene() {
       <Suspense fallback={<LoadingFallback />}>
         <Lights />
         <StoreEnvironment />
-        {/* Preload all — del skill react-three-next: precarga todos los assets */}
         <Preload all />
       </Suspense>
 
