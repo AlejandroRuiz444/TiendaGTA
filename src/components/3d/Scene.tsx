@@ -2,7 +2,14 @@
 
 import { Suspense, useState, useEffect } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { PerformanceMonitor, Stats, PointerLockControls, Preload } from '@react-three/drei'
+import {
+  PerformanceMonitor,
+  AdaptiveDpr,
+  AdaptiveEvents,
+  Stats,
+  PointerLockControls,
+  Preload,
+} from '@react-three/drei'
 import * as THREE from 'three'
 import { Lights } from './Lights'
 import { StoreEnvironment } from './StoreEnvironment'
@@ -23,24 +30,17 @@ function LoadingFallback() {
 }
 
 export function Scene() {
-  const [dpr, setDpr] = useState<[number, number]>([1, 2])
-  const setPointerLocked = usePlayerStore(s => s.setPointerLocked)
-  const setProducts      = useProductStore(s => s.setProducts)
+  const [dpr, setDpr]      = useState(1.5)
+  const setPointerLocked   = usePlayerStore(s => s.setPointerLocked)
+  const setProducts        = useProductStore(s => s.setProducts)
 
   useEffect(() => {
-    // Intentar cargar productos desde Supabase
-    // Si falla (sin claves o sin conexión), usar mockProducts como fallback
     async function loadProducts() {
       try {
         const res = await fetch('/api/products')
         if (!res.ok) throw new Error('API error')
         const { data } = await res.json()
-        if (data && data.length > 0) {
-          setProducts(data as Product[])
-        } else {
-          // DB vacía — usar mock hasta que se ejecute el seed
-          setProducts(mockProducts)
-        }
+        setProducts(data && data.length > 0 ? (data as Product[]) : mockProducts)
       } catch {
         console.warn('[Scene] Usando productos mock — ejecuta supabase-schema.sql')
         setProducts(mockProducts)
@@ -54,17 +54,43 @@ export function Scene() {
       shadows
       camera={{ fov: 75, near: 0.1, far: 100, position: [0, 1.7, 8] }}
       dpr={dpr}
+      // performance.min: 0.5 — DPR bajará a la mitad durante movimiento/regress
+      performance={{ min: 0.5 }}
       gl={{
         antialias: true,
         toneMapping: THREE.AgXToneMapping,
         toneMappingExposure: 1.0,
+        // Potencia de 2 para mejor rendimiento en GPUs móviles
+        powerPreference: 'high-performance',
       }}
       style={{ background: '#0a0a1a' }}
     >
+      {/*
+        PerformanceMonitor: mide FPS promedio y ajusta gradualmente el DPR.
+        - onIncline: FPS estable alto → sube calidad
+        - onDecline: FPS bajo → baja calidad
+        - flipflops: 3 → si ping-ponguea 3 veces, aplica fallback a DPR 1
+      */}
       <PerformanceMonitor
-        onIncline={() => setDpr([1, 2])}
-        onDecline={() => setDpr([1, 1])}
+        flipflops={3}
+        onIncline={() => setDpr(Math.min(dpr + 0.5, 2))}
+        onDecline={() => setDpr(Math.max(dpr - 0.5, 1))}
+        onFallback={() => setDpr(1)}
       />
+
+      {/*
+        AdaptiveDpr: multiplica el DPR del Canvas por state.performance.current.
+        Cuando PlayerController llama regress(), current baja a min (0.5),
+        reduciendo la resolución a la mitad durante el movimiento.
+      */}
+      <AdaptiveDpr pixelated />
+
+      {/*
+        AdaptiveEvents: pausa el sistema de eventos (raycasting de R3F)
+        mientras performance.current < 1 (durante regress).
+        Nuestro propio RaycastController es manual y no se ve afectado.
+      */}
+      <AdaptiveEvents />
 
       <PointerLockControls
         onLock={() => setPointerLocked(true)}

@@ -11,7 +11,7 @@ const PLAYER_HEIGHT = 1.7
 const MOVE_SPEED    = 5
 
 // ── Vectores pre-alocados fuera del loop para evitar presión en el GC ─────────
-// (siguiendo la guía de pitfalls de R3F)
+// (per R3F pitfalls: pre-allocate outside component)
 const _front     = new THREE.Vector3()
 const _side      = new THREE.Vector3()
 const _direction = new THREE.Vector3()
@@ -21,7 +21,11 @@ export function PlayerController() {
   const { camera } = useThree()
   const isPointerLocked = usePlayerStore(s => s.isPointerLocked)
 
-  // Mapa de teclas presionadas — useRef, NO useState, para no triggerear re-renders
+  // regress(): baja el DPR mientras el jugador se mueve para mantener 60fps
+  // (per R3F scaling-performance: movement regression)
+  const regress = useThree(state => state.performance.regress)
+
+  // Mapa de teclas — useRef, NO useState, para no triggerear re-renders
   const keys = useRef({
     forward:  false,
     backward: false,
@@ -57,16 +61,17 @@ export function PlayerController() {
   }, [])
 
   // ── Loop de movimiento ────────────────────────────────────────────────────
-  // Siguiendo R3F pitfalls: mutamos camera directamente, jamás setState aquí
   useFrame((_, delta) => {
     if (!isPointerLocked) return
 
-    const k = keys.current
+    const k      = keys.current
     const moving = k.forward || k.backward || k.left || k.right
     if (!moving) return
 
-    // Proyectamos solo el eje Y de la cámara (yaw) para movimiento horizontal
-    // Ignoramos pitch para no "volar" al mirar arriba/abajo
+    // Llamar regress() en cada frame de movimiento para reducir DPR durante el
+    // desplazamiento (Canvas tiene performance.min: 0.5 configurado)
+    regress()
+
     _euler.set(0, camera.rotation.y, 0, 'YXZ')
 
     _front.set(0, 0, (k.backward ? 1 : 0) - (k.forward  ? 1 : 0))
@@ -78,17 +83,14 @@ export function PlayerController() {
       .multiplyScalar(MOVE_SPEED * delta)
       .applyEuler(_euler)
 
-    // Aplicar movimiento y clampear dentro de los límites de la tienda
     camera.position.x = THREE.MathUtils.clamp(
       camera.position.x + _direction.x,
-      BOUNDS.minX, BOUNDS.maxX
+      BOUNDS.minX, BOUNDS.maxX,
     )
     camera.position.z = THREE.MathUtils.clamp(
       camera.position.z + _direction.z,
-      BOUNDS.minZ, BOUNDS.maxZ
+      BOUNDS.minZ, BOUNDS.maxZ,
     )
-
-    // Mantener altura fija (sin gravedad ni salto)
     camera.position.y = PLAYER_HEIGHT
   })
 
